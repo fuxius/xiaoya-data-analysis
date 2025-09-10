@@ -5,6 +5,7 @@ data/
 *.xlsx
 *.xls
 *.csv
+*.json
 raw_data/
 sensitive_data/
 
