@@ -6,6 +6,7 @@
 
 import pandas as pd
 import numpy as np
+import json
 
 def calculate_sus_scores(df):
     """计算SUS分数"""
@@ -158,6 +159,26 @@ def create_sus_statistics(df):
                     '中位数': round(dept_scores.median(), 2)
                 })
     
+    # 4. 按年资统计
+    if '年资分类' in df.columns and 'SUS_Score' in df.columns:
+        for seniority in df['年资分类'].unique():
+            seniority_data = df[df['年资分类'] == seniority]
+            seniority_scores = seniority_data['SUS_Score'].dropna()
+            
+            if len(seniority_scores) > 0:
+                stats_data.append({
+                    '指标类型': '年资分析',
+                    '指标名称': f'{seniority}_SUS总分',
+                    '指标描述': f'{seniority}医护人员SUS总分',
+                    '样本数': len(seniority_scores),
+                    '平均值': round(seniority_scores.mean(), 2),
+                    '方差': round(seniority_scores.var(), 2),
+                    '标准差': round(seniority_scores.std(), 2),
+                    '最小值': round(seniority_scores.min(), 2),
+                    '最大值': round(seniority_scores.max(), 2),
+                    '中位数': round(seniority_scores.median(), 2)
+                })
+    
     return pd.DataFrame(stats_data)
 
 def main():
@@ -167,11 +188,25 @@ def main():
     print("正在读取数据文件...")
     df = pd.read_excel('results/merged_dataset_simple.xlsx')
     
+    # 读取年资分类数据
+    print("正在加载年资分类...")
+    try:
+        with open('results/seniority_classification.json', 'r', encoding='utf-8') as f:
+            seniority_data = json.load(f)
+        
+        # 添加年资分类到数据框
+        df['年资分类'] = df['ID'].map(lambda x: seniority_data['participant_classification'].get(x, {}).get('seniority_level', '未知'))
+        print(f"✓ 年资分类已加载")
+    except FileNotFoundError:
+        print("⚠️ 未找到年资分类文件，将不进行年资分析")
+        df['年资分类'] = '未知'
+    
     # 定义参与者基本信息列
     participant_cols = [
         'ID',
         '科室',
-        '7、您当前的身份或职称是？'
+        '7、您当前的身份或职称是？',
+        '年资分类'
     ]
     
     # 定义SUS量表的10个题目列
@@ -249,6 +284,13 @@ def main():
                 dept_scores = sus_data_with_scores.groupby('科室')['SUS_Score'].agg(['count', 'mean', 'std']).round(1)
                 dept_scores.columns = ['人数', '平均分', '标准差']
                 print(dept_scores)
+            
+            # 按年资显示
+            if '年资分类' in sus_data_with_scores.columns:
+                print(f"\n按年资SUS分数:")
+                seniority_scores = sus_data_with_scores.groupby('年资分类')['SUS_Score'].agg(['count', 'mean', 'std']).round(1)
+                seniority_scores.columns = ['人数', '平均分', '标准差']
+                print(seniority_scores)
 
 if __name__ == "__main__":
     main()
