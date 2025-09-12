@@ -119,24 +119,27 @@ def create_sus_statistics(df):
                 '中位数': round(sus_scores.median(), 2)
             })
     
-    # 2. 各问题统计
+    # 2. 各问题统计（转换为百分制）
     sus_columns = [col for col in df.columns if col.startswith('SUS_Q')]
     for col in sus_columns:
         numeric_values = df[col].map(likert_mapping)
         valid_values = numeric_values.dropna()
         
         if len(valid_values) > 0:
+            # 转换为百分制：(分数-1) * 25，使1-5分对应0-100分
+            percentage_values = (valid_values - 1) * 25
+            
             stats_data.append({
                 '指标类型': '单项问题',
                 '指标名称': col,
                 '指标描述': question_descriptions.get(col, col),
-                '样本数': len(valid_values),
-                '平均值': round(valid_values.mean(), 2),
-                '方差': round(valid_values.var(), 2),
-                '标准差': round(valid_values.std(), 2),
-                '最小值': round(valid_values.min(), 2),
-                '最大值': round(valid_values.max(), 2),
-                '中位数': round(valid_values.median(), 2)
+                '样本数': len(percentage_values),
+                '平均值': round(percentage_values.mean(), 2),
+                '方差': round(percentage_values.var(), 2),
+                '标准差': round(percentage_values.std(), 2),
+                '最小值': round(percentage_values.min(), 2),
+                '最大值': round(percentage_values.max(), 2),
+                '中位数': round(percentage_values.median(), 2)
             })
     
     # 3. 按科室统计
@@ -186,7 +189,7 @@ def main():
     
     # 读取合并后的数据
     print("正在读取数据文件...")
-    df = pd.read_excel('results/merged_dataset_simple.xlsx')
+    df = pd.read_excel('results/datasets/merged_dataset_simple.xlsx')
     
     # 读取年资分类数据
     print("正在加载年资分类...")
@@ -259,12 +262,12 @@ def main():
     # 保存两个核心文件
     
     # 1. 原始数据文件（包含所有原始信息和计算的分数）
-    raw_file = 'results/sus_raw_data.csv'
+    raw_file = 'results/sus/sus_raw_data.csv'
     sus_data_with_scores.to_csv(raw_file, index=False, encoding='utf-8-sig')
     print(f"✓ SUS原始数据（含分数）已保存到: {raw_file}")
     
     # 2. 统计分析文件（关键统计信息）
-    stats_file = 'results/sus_analysis.csv'
+    stats_file = 'results/sus/sus_analysis.csv'
     sus_statistics.to_csv(stats_file, index=False, encoding='utf-8-sig')
     print(f"✓ SUS统计分析已保存到: {stats_file}")
     
