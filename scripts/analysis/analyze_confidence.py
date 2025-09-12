@@ -16,12 +16,12 @@ from scipy import stats
 def load_data_and_create_groups():
     """加载数据并创建分组变量"""
     print("正在读取数据文件...")
-    df = pd.read_excel('results/merged_dataset_simple.xlsx')
+    df = pd.read_excel('results/datasets/merged_dataset_simple.xlsx')
     
     # 读取年资分类数据
     print("正在加载年资分类...")
     try:
-        with open('results/seniority_classification.json', 'r', encoding='utf-8') as f:
+        with open('results/participants/seniority_classification.json', 'r', encoding='utf-8') as f:
             seniority_data = json.load(f)
         
         # 添加年资分类到数据框
@@ -469,22 +469,22 @@ def main():
     # 保存结果文件
     
     # 1. 原始信心数据（宽格式，配对数据）
-    raw_file = 'results/confidence_raw_data.csv'
+    raw_file = 'results/confidence/confidence_raw_data.csv'
     confidence_df.to_csv(raw_file, index=False, encoding='utf-8-sig')
     print(f"\n✓ 信心原始数据（配对）已保存到: {raw_file}")
     
     # 2. 长格式信心数据
-    long_file = 'results/confidence_long_data.csv'
+    long_file = 'results/confidence/confidence_long_data.csv'
     confidence_long_df.to_csv(long_file, index=False, encoding='utf-8-sig')
     print(f"✓ 信心长格式数据已保存到: {long_file}")
     
     # 3. 信心统计分析
-    stats_file = 'results/confidence_analysis.csv'
+    stats_file = 'results/confidence/confidence_analysis.csv'
     confidence_stats.to_csv(stats_file, index=False, encoding='utf-8-sig')
     print(f"✓ 信心统计分析已保存到: {stats_file}")
     
     # 4. 信心模式分析
-    patterns_file = 'results/confidence_patterns.csv'
+    patterns_file = 'results/confidence/confidence_patterns.csv'
     confidence_patterns.to_csv(patterns_file, index=False, encoding='utf-8-sig')
     print(f"✓ 信心模式分析已保存到: {patterns_file}")
     

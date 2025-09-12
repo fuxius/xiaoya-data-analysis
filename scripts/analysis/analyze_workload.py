@@ -17,12 +17,12 @@ import re
 def load_data_and_create_groups():
     """加载数据并创建分组变量"""
     print("正在读取数据文件...")
-    df = pd.read_excel('results/merged_dataset_simple.xlsx')
+    df = pd.read_excel('results/datasets/merged_dataset_simple.xlsx')
     
     # 读取年资分类数据
     print("正在加载年资分类...")
     try:
-        with open('results/seniority_classification.json', 'r', encoding='utf-8') as f:
+        with open('results/participants/seniority_classification.json', 'r', encoding='utf-8') as f:
             seniority_data = json.load(f)
         
         # 添加年资分类到数据框
@@ -495,22 +495,22 @@ def main():
     # 保存结果文件
     
     # 1. 原始认知负荷数据（宽格式）
-    raw_file = 'results/workload_raw_data.csv'
+    raw_file = 'results/workload/workload_raw_data.csv'
     workload_df.to_csv(raw_file, index=False, encoding='utf-8-sig')
     print(f"\n✓ 认知负荷原始数据已保存到: {raw_file}")
     
     # 2. 长格式认知负荷数据
-    long_file = 'results/workload_long_data.csv'
+    long_file = 'results/workload/workload_long_data.csv'
     workload_long_df.to_csv(long_file, index=False, encoding='utf-8-sig')
     print(f"✓ 认知负荷长格式数据已保存到: {long_file}")
     
     # 3. 认知负荷统计分析
-    stats_file = 'results/workload_analysis.csv'
+    stats_file = 'results/workload/workload_analysis.csv'
     workload_stats.to_csv(stats_file, index=False, encoding='utf-8-sig')
     print(f"✓ 认知负荷统计分析已保存到: {stats_file}")
     
     # 4. NASA-TLX维度分析
-    dimension_file = 'results/nasa_tlx_dimensions.csv'
+    dimension_file = 'results/workload/nasa_tlx_dimensions.csv'
     dimension_analysis.to_csv(dimension_file, index=False, encoding='utf-8-sig')
     print(f"✓ NASA-TLX维度分析已保存到: {dimension_file}")
     

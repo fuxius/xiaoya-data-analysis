@@ -8,7 +8,7 @@ import json
 
 def main():
     # 读取基本信息表
-    df = pd.read_excel("results/participant_basic_info.xlsx")
+    df = pd.read_excel("results/participants/participant_basic_info.xlsx")
     
     print("=== 患者基本信息表分析报告 ===\n")
     

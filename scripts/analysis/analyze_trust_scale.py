@@ -327,17 +327,17 @@ def main():
     # 保存结果文件
     
     # 1. 信任度原始数据
-    raw_file = 'results/trust_scale_data.csv'
+    raw_file = 'results/trust/trust_scale_data.csv'
     trust_df.to_csv(raw_file, index=False, encoding='utf-8-sig')
     print(f"\n✓ 信任度原始数据已保存到: {raw_file}")
     
     # 2. 信任度统计分析
-    stats_file = 'results/trust_scale_analysis.csv'
+    stats_file = 'results/trust/trust_scale_analysis.csv'
     trust_stats.to_csv(stats_file, index=False, encoding='utf-8-sig')
     print(f"✓ 信任度统计分析已保存到: {stats_file}")
     
     # 3. 信任度维度分析
-    dimension_file = 'results/trust_scale_dimensions.csv'
+    dimension_file = 'results/trust/trust_scale_dimensions.csv'
     dimension_analysis.to_csv(dimension_file, index=False, encoding='utf-8-sig')
     print(f"✓ 信任度维度分析已保存到: {dimension_file}")
     

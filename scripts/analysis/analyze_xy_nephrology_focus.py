@@ -34,7 +34,7 @@ def load_data():
         df = pd.read_excel('results/datasets/merged_dataset_simple.xlsx')
         print(f"✓ 成功加载合并数据集: {df.shape}")
     except:
-        df = pd.read_excel('results/merged_dataset_simple.xlsx')
+        df = pd.read_excel('results/datasets/merged_dataset_simple.xlsx')
         print(f"✓ 成功加载合并数据集: {df.shape}")
     
     # 加载年资分类
