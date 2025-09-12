@@ -189,8 +189,13 @@ def perform_rm_anova_analysis(data_df, participant_col='participant_id',
             art_success = ro.r('art_success')[0]
             
             if art_success:
+                main_effect_df = ro.conversion.rpy2py(ro.r('res_art'))
+                # 统一列名：将 'F value' 转换为 'F' 以保持兼容性
+                if 'F value' in main_effect_df.columns:
+                    main_effect_df = main_effect_df.rename(columns={'F value': 'F'})
+                
                 results = {
-                    'main_effect': ro.conversion.rpy2py(ro.r('res_art')),
+                    'main_effect': main_effect_df,
                     'post_hoc_holm': ro.conversion.rpy2py(ro.r('post_art_holm')),
                     'post_hoc_bh': ro.conversion.rpy2py(ro.r('post_art_bh')),
                     'effect_size_pes': ro.conversion.rpy2py(ro.r('res_rm_pes')),

@@ -285,116 +285,128 @@ def calculate_efficiency_statistics(efficiency_df):
     
     # 3. 按年资统计
     print("\n3. 按年资效率统计:")
-    for seniority in efficiency_df['年资分类'].unique():
+    for seniority in efficiency_long_df['seniority'].unique():
         if seniority == '未知':
             continue
-            
-        seniority_data = efficiency_df[efficiency_df['年资分类'] == seniority]
-        if len(seniority_data) == 0:
+        
+        # 直接在长格式数据上筛选
+        seniority_long_data = efficiency_long_df[efficiency_long_df['seniority'] == seniority]
+        
+        if len(seniority_long_data['participant_id'].unique()) < 2:  # 至少需要2个参与者
+            print(f"  {seniority}: 数据不足，跳过分析")
             continue
             
         print(f"\n  {seniority}:")
         
-        # AI辅助组统计
-        seniority_ai_times = seniority_data['ai_avg_time']
-        stats_data.append({
-            '分析维度': f'年资_{seniority}',
-            '分组': 'AI辅助组',
-            '样本数': len(seniority_ai_times),
-            '平均时间_秒': round(seniority_ai_times.mean(), 2),
-            '标准差_秒': round(seniority_ai_times.std(), 2),
-            '中位数_秒': round(seniority_ai_times.median(), 2),
-            '最小值_秒': round(seniority_ai_times.min(), 2),
-            '最大值_秒': round(seniority_ai_times.max(), 2),
-            '平均时间_分钟': round(seniority_ai_times.mean() / 60, 2)
-        })
-        print(f"    AI辅助组: n={len(seniority_ai_times)}, M={seniority_ai_times.mean():.2f}s")
+        # 描述性统计
+        for condition in ['AI辅助', '无辅助']:
+            condition_data = seniority_long_data[seniority_long_data['condition'] == condition]
+            times = condition_data['avg_time']
+            
+            condition_label = f'{condition}组'
+            stats_data.append({
+                '分析维度': f'年资_{seniority}',
+                '分组': condition_label,
+                '样本数': len(times),
+                '平均时间_秒': round(times.mean(), 2),
+                '标准差_秒': round(times.std(), 2),
+                '中位数_秒': round(times.median(), 2),
+                '最小值_秒': round(times.min(), 2),
+                '最大值_秒': round(times.max(), 2),
+                '平均时间_分钟': round(times.mean() / 60, 2)
+            })
+            print(f"    {condition_label}: n={len(times)}, M={times.mean():.2f}s ({times.mean()/60:.2f}min)")
         
-        # 无辅助组统计
-        seniority_no_ai_times = seniority_data['no_ai_avg_time']
-        stats_data.append({
-            '分析维度': f'年资_{seniority}',
-            '分组': '无辅助组',
-            '样本数': len(seniority_no_ai_times),
-            '平均时间_秒': round(seniority_no_ai_times.mean(), 2),
-            '标准差_秒': round(seniority_no_ai_times.std(), 2),
-            '中位数_秒': round(seniority_no_ai_times.median(), 2),
-            '最小值_秒': round(seniority_no_ai_times.min(), 2),
-            '最大值_秒': round(seniority_no_ai_times.max(), 2),
-            '平均时间_分钟': round(seniority_no_ai_times.mean() / 60, 2)
-        })
-        print(f"    无辅助组: n={len(seniority_no_ai_times)}, M={seniority_no_ai_times.mean():.2f}s")
+        # 执行年资分组的 rm-ANOVA
+        print(f"    执行{seniority}年资rm-ANOVA:")
+        seniority_rm_results = perform_rm_anova_analysis(
+            seniority_long_data,
+            participant_col='participant_id',
+            condition_col='condition',
+            dv_col='avg_time'
+        )
         
-        # 年资内配对t检验
-        if len(seniority_data) > 1:
-            try:
-                t_stat, p_value = stats.ttest_rel(seniority_ai_times, seniority_no_ai_times)
-                effect_size = calculate_cohens_d_paired(seniority_ai_times, seniority_no_ai_times)
-                print(f"    {seniority}年资配对t检验: t={t_stat:.4f}, p={p_value:.4f}")
-                
-                # 添加检验结果
-                seniority_stats = [s for s in stats_data if s['分析维度'] == f'年资_{seniority}']
-                for stat in seniority_stats:
-                    stat['t_value'] = t_stat
-                    stat['p_value'] = p_value
-                    stat['effect_size'] = effect_size
-            except:
-                print(f"    {seniority}年资t检验: 计算失败")
+        if seniority_rm_results:
+            print_rm_anova_summary(seniority_rm_results, f"{seniority}年资效率分析")
+            
+            # 提取统计量并添加到结果中
+            main_effect = seniority_rm_results.get('main_effect', pd.DataFrame())
+            effect_size = seniority_rm_results.get('effect_size_pes', pd.DataFrame())
+            
+            f_value = main_effect['F'].iloc[0] if len(main_effect) > 0 and 'F' in main_effect.columns else np.nan
+            p_value = main_effect['Pr(>F)'].iloc[0] if len(main_effect) > 0 and 'Pr(>F)' in main_effect.columns else np.nan
+            pes_value = effect_size['pes'].iloc[0] if len(effect_size) > 0 and 'pes' in effect_size.columns else np.nan
+            
+            # 添加检验结果
+            seniority_stats = [s for s in stats_data if s['分析维度'] == f'年资_{seniority}']
+            for stat in seniority_stats:
+                stat['f_value'] = f_value
+                stat['p_value'] = p_value
+                stat['partial_eta_squared'] = pes_value
+                stat['analysis_type'] = seniority_rm_results.get('analysis_type', 'RM_ANOVA')
+        else:
+            print(f"    {seniority}年资rm-ANOVA分析失败")
     
     # 4. 按医院统计
     print("\n4. 按医院效率统计:")
-    for hospital in efficiency_df['hospital'].unique():
-        hospital_data = efficiency_df[efficiency_df['hospital'] == hospital]
-        if len(hospital_data) == 0:
+    for hospital in efficiency_long_df['hospital'].unique():
+        # 直接在长格式数据上筛选
+        hospital_long_data = efficiency_long_df[efficiency_long_df['hospital'] == hospital]
+        
+        if len(hospital_long_data['participant_id'].unique()) < 2:  # 至少需要2个参与者
+            print(f"  {hospital}医院: 数据不足，跳过分析")
             continue
             
         print(f"\n  {hospital}医院:")
         
-        # AI辅助组统计
-        hospital_ai_times = hospital_data['ai_avg_time']
-        stats_data.append({
-            '分析维度': f'医院_{hospital}',
-            '分组': 'AI辅助组',
-            '样本数': len(hospital_ai_times),
-            '平均时间_秒': round(hospital_ai_times.mean(), 2),
-            '标准差_秒': round(hospital_ai_times.std(), 2),
-            '中位数_秒': round(hospital_ai_times.median(), 2),
-            '最小值_秒': round(hospital_ai_times.min(), 2),
-            '最大值_秒': round(hospital_ai_times.max(), 2),
-            '平均时间_分钟': round(hospital_ai_times.mean() / 60, 2)
-        })
-        print(f"    AI辅助组: n={len(hospital_ai_times)}, M={hospital_ai_times.mean():.2f}s")
+        # 描述性统计
+        for condition in ['AI辅助', '无辅助']:
+            condition_data = hospital_long_data[hospital_long_data['condition'] == condition]
+            times = condition_data['avg_time']
+            
+            condition_label = f'{condition}组'
+            stats_data.append({
+                '分析维度': f'医院_{hospital}',
+                '分组': condition_label,
+                '样本数': len(times),
+                '平均时间_秒': round(times.mean(), 2),
+                '标准差_秒': round(times.std(), 2),
+                '中位数_秒': round(times.median(), 2),
+                '最小值_秒': round(times.min(), 2),
+                '最大值_秒': round(times.max(), 2),
+                '平均时间_分钟': round(times.mean() / 60, 2)
+            })
+            print(f"    {condition_label}: n={len(times)}, M={times.mean():.2f}s ({times.mean()/60:.2f}min)")
         
-        # 无辅助组统计
-        hospital_no_ai_times = hospital_data['no_ai_avg_time']
-        stats_data.append({
-            '分析维度': f'医院_{hospital}',
-            '分组': '无辅助组',
-            '样本数': len(hospital_no_ai_times),
-            '平均时间_秒': round(hospital_no_ai_times.mean(), 2),
-            '标准差_秒': round(hospital_no_ai_times.std(), 2),
-            '中位数_秒': round(hospital_no_ai_times.median(), 2),
-            '最小值_秒': round(hospital_no_ai_times.min(), 2),
-            '最大值_秒': round(hospital_no_ai_times.max(), 2),
-            '平均时间_分钟': round(hospital_no_ai_times.mean() / 60, 2)
-        })
-        print(f"    无辅助组: n={len(hospital_no_ai_times)}, M={hospital_no_ai_times.mean():.2f}s")
+        # 执行医院分组的 rm-ANOVA
+        print(f"    执行{hospital}医院rm-ANOVA:")
+        hospital_rm_results = perform_rm_anova_analysis(
+            hospital_long_data,
+            participant_col='participant_id',
+            condition_col='condition',
+            dv_col='avg_time'
+        )
         
-        # 医院内配对t检验
-        if len(hospital_data) > 1:
-            try:
-                t_stat, p_value = stats.ttest_rel(hospital_ai_times, hospital_no_ai_times)
-                effect_size = calculate_cohens_d_paired(hospital_ai_times, hospital_no_ai_times)
-                print(f"    {hospital}医院配对t检验: t={t_stat:.4f}, p={p_value:.4f}")
-                
-                # 添加检验结果
-                hospital_stats = [s for s in stats_data if s['分析维度'] == f'医院_{hospital}']
-                for stat in hospital_stats:
-                    stat['t_value'] = t_stat
-                    stat['p_value'] = p_value
-                    stat['effect_size'] = effect_size
-            except:
-                print(f"    {hospital}医院t检验: 计算失败")
+        if hospital_rm_results:
+            print_rm_anova_summary(hospital_rm_results, f"{hospital}医院效率分析")
+            
+            # 提取统计量并添加到结果中
+            main_effect = hospital_rm_results.get('main_effect', pd.DataFrame())
+            effect_size = hospital_rm_results.get('effect_size_pes', pd.DataFrame())
+            
+            f_value = main_effect['F'].iloc[0] if len(main_effect) > 0 and 'F' in main_effect.columns else np.nan
+            p_value = main_effect['Pr(>F)'].iloc[0] if len(main_effect) > 0 and 'Pr(>F)' in main_effect.columns else np.nan
+            pes_value = effect_size['pes'].iloc[0] if len(effect_size) > 0 and 'pes' in effect_size.columns else np.nan
+            
+            # 添加检验结果
+            hospital_stats = [s for s in stats_data if s['分析维度'] == f'医院_{hospital}']
+            for stat in hospital_stats:
+                stat['f_value'] = f_value
+                stat['p_value'] = p_value
+                stat['partial_eta_squared'] = pes_value
+                stat['analysis_type'] = hospital_rm_results.get('analysis_type', 'RM_ANOVA')
+        else:
+            print(f"    {hospital}医院rm-ANOVA分析失败")
     
     return pd.DataFrame(stats_data)
 

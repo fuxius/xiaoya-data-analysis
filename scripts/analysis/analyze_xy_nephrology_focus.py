@@ -396,6 +396,9 @@ def perform_xy_statistical_analysis(individual_performance_df):
     
     paired_df = pd.DataFrame(paired_data)
     
+    # 创建统计结果存储
+    statistical_results = []
+    
     # 总体统计检验 - 使用rm-ANOVA
     if len(paired_data) > 1:
         ai_accuracies = [p['ai_accuracy'] for p in paired_data]
@@ -430,18 +433,51 @@ def perform_xy_statistical_analysis(individual_performance_df):
             
             # 提取统计量
             main_effect = rm_results.get('main_effect', pd.DataFrame())
+            effect_size = rm_results.get('effect_size_pes', pd.DataFrame())
+            
             if len(main_effect) > 0 and 'Pr(>F)' in main_effect.columns:
                 p_value = main_effect['Pr(>F)'].iloc[0]
                 f_value = main_effect['F'].iloc[0] if 'F' in main_effect.columns else np.nan
+                pes_value = effect_size['pes'].iloc[0] if len(effect_size) > 0 and 'pes' in effect_size.columns else np.nan
+                
                 print(f"   F统计量: {f_value:.3f}")
                 print(f"   p值: {p_value:.4f}")
                 print(f"   统计显著性: {'是' if p_value < 0.05 else '否'}")
+                
+                # 保存总体统计结果
+                statistical_results.append({
+                    'analysis_type': '总体分析',
+                    'group': '全部参与者',
+                    'n_participants': len(paired_data),
+                    'ai_mean_accuracy': np.mean(ai_accuracies),
+                    'ai_std_accuracy': np.std(ai_accuracies, ddof=1),
+                    'no_ai_mean_accuracy': np.mean(no_ai_accuracies),
+                    'no_ai_std_accuracy': np.std(no_ai_accuracies, ddof=1),
+                    'mean_difference': np.mean([p['difference'] for p in paired_data]),
+                    'f_value': f_value,
+                    'p_value': p_value,
+                    'partial_eta_squared': pes_value,
+                    'statistical_method': 'RM-ANOVA',
+                    'significance': 'Yes' if p_value < 0.05 else 'No'
+                })
         else:
-            # 回退到t检验
-            t_stat, p_value = stats.ttest_rel(ai_accuracies, no_ai_accuracies)
-            print(f"   t统计量: {t_stat:.3f}")
-            print(f"   p值: {p_value:.4f}")
-            print(f"   统计显著性: {'是' if p_value < 0.05 else '否'}")
+            print("   rm-ANOVA分析失败，无法进行统计检验")
+            # 保存失败记录
+            statistical_results.append({
+                'analysis_type': '总体分析',
+                'group': '全部参与者',
+                'n_participants': len(paired_data),
+                'ai_mean_accuracy': np.mean(ai_accuracies),
+                'ai_std_accuracy': np.std(ai_accuracies, ddof=1),
+                'no_ai_mean_accuracy': np.mean(no_ai_accuracies),
+                'no_ai_std_accuracy': np.std(no_ai_accuracies, ddof=1),
+                'mean_difference': np.mean([p['difference'] for p in paired_data]),
+                'f_value': np.nan,
+                'p_value': np.nan,
+                'partial_eta_squared': np.nan,
+                'statistical_method': 'RM-ANOVA',
+                'significance': 'Failed'
+            })
     
     # 年资分组分析
     print(f"\n🎓 年资分组分析:")
@@ -477,21 +513,71 @@ def perform_xy_statistical_analysis(individual_performance_df):
             
             if seniority_rm_results:
                 main_effect = seniority_rm_results.get('main_effect', pd.DataFrame())
+                effect_size = seniority_rm_results.get('effect_size_pes', pd.DataFrame())
+                
                 if len(main_effect) > 0 and 'Pr(>F)' in main_effect.columns:
                     p_value_sen = main_effect['Pr(>F)'].iloc[0]
+                    f_value_sen = main_effect['F'].iloc[0] if 'F' in main_effect.columns else np.nan
+                    pes_value_sen = effect_size['pes'].iloc[0] if len(effect_size) > 0 and 'pes' in effect_size.columns else np.nan
+                    
                     print(f"     rm-ANOVA p值: {p_value_sen:.4f}")
+                    
+                    # 保存年资分组统计结果
+                    statistical_results.append({
+                        'analysis_type': '年资分组',
+                        'group': seniority,
+                        'n_participants': len(seniority_data),
+                        'ai_mean_accuracy': ai_acc.mean(),
+                        'ai_std_accuracy': ai_acc.std(ddof=1),
+                        'no_ai_mean_accuracy': no_ai_acc.mean(),
+                        'no_ai_std_accuracy': no_ai_acc.std(ddof=1),
+                        'mean_difference': seniority_data['difference'].mean(),
+                        'f_value': f_value_sen,
+                        'p_value': p_value_sen,
+                        'partial_eta_squared': pes_value_sen,
+                        'statistical_method': 'RM-ANOVA',
+                        'significance': 'Yes' if p_value_sen < 0.05 else 'No'
+                    })
                 else:
-                    # 回退到t检验
-                    t_stat_sen, p_value_sen = stats.ttest_rel(ai_acc, no_ai_acc)
-                    print(f"     配对t检验 p值: {p_value_sen:.4f}")
+                    print(f"     rm-ANOVA分析失败")
+                    # 保存失败记录
+                    statistical_results.append({
+                        'analysis_type': '年资分组',
+                        'group': seniority,
+                        'n_participants': len(seniority_data),
+                        'ai_mean_accuracy': ai_acc.mean(),
+                        'ai_std_accuracy': ai_acc.std(ddof=1),
+                        'no_ai_mean_accuracy': no_ai_acc.mean(),
+                        'no_ai_std_accuracy': no_ai_acc.std(ddof=1),
+                        'mean_difference': seniority_data['difference'].mean(),
+                        'f_value': np.nan,
+                        'p_value': np.nan,
+                        'partial_eta_squared': np.nan,
+                        'statistical_method': 'RM-ANOVA',
+                        'significance': 'Failed'
+                    })
             else:
-                # 回退到t检验
-                t_stat_sen, p_value_sen = stats.ttest_rel(ai_acc, no_ai_acc)
-                print(f"     配对t检验 p值: {p_value_sen:.4f}")
+                print(f"     rm-ANOVA分析失败")
+                # 保存失败记录
+                statistical_results.append({
+                    'analysis_type': '年资分组',
+                    'group': seniority,
+                    'n_participants': len(seniority_data),
+                    'ai_mean_accuracy': ai_acc.mean(),
+                    'ai_std_accuracy': ai_acc.std(ddof=1),
+                    'no_ai_mean_accuracy': no_ai_acc.mean(),
+                    'no_ai_std_accuracy': no_ai_acc.std(ddof=1),
+                    'mean_difference': seniority_data['difference'].mean(),
+                    'f_value': np.nan,
+                    'p_value': np.nan,
+                    'partial_eta_squared': np.nan,
+                    'statistical_method': 'RM-ANOVA',
+                    'significance': 'Failed'
+                })
         else:
             print(f"   {seniority}: 样本量不足，无法进行统计检验")
     
-    return paired_df
+    return paired_df, pd.DataFrame(statistical_results)
 
 def generate_xy_summary_report(ai_metrics, paired_df, output_dir):
     """生成XY专项分析总结报告"""
@@ -591,7 +677,7 @@ def main():
     individual_performance_df = calculate_xy_individual_performance(condition_df)
     
     # 7. 统计分析
-    paired_df = perform_xy_statistical_analysis(individual_performance_df)
+    paired_df, statistical_results_df = perform_xy_statistical_analysis(individual_performance_df)
     
     # 8. 生成报告
     generate_xy_summary_report(ai_metrics, paired_df, output_dir)
@@ -600,11 +686,16 @@ def main():
     individual_performance_df.to_csv(f'{output_dir}/xy_nephrology_individual_performance.csv', 
                                    index=False, encoding='utf-8-sig')
     
+    # 10. 保存统计结果
+    statistical_results_df.to_csv(f'{output_dir}/xy_nephrology_statistical_results.csv',
+                                 index=False, encoding='utf-8-sig')
+    
     print(f"\n🎉 XY-Nephrology专项分析完成！")
     print(f"📁 所有结果文件已保存到: {output_dir}/")
     print("   - xy_nephrology_analysis_report.txt (详细分析报告)")
     print("   - xy_nephrology_paired_performance.csv (配对性能数据)")
     print("   - xy_nephrology_individual_performance.csv (个体性能数据)")
+    print("   - xy_nephrology_statistical_results.csv (统计检验结果)")
     
     # 显示关键结果
     print(f"\n📊 关键发现:")
@@ -613,11 +704,34 @@ def main():
     print(f"   医生无辅助准确率: {paired_df['no_ai_accuracy'].mean():.1%}")
     print(f"   AI辅助效果: {paired_df['difference'].mean():+.1%}")
     
-    # 统计显著性
+    # rm-ANOVA统计检验
     if len(paired_df) > 1:
-        t_stat, p_value = stats.ttest_rel(paired_df['ai_accuracy'], paired_df['no_ai_accuracy'])
-        significance = "显著" if p_value < 0.05 else "不显著"
-        print(f"   统计显著性: {significance} (p={p_value:.4f})")
+        # 准备长格式数据
+        long_data = []
+        for _, row in paired_df.iterrows():
+            long_data.append({'participant_id': row['participant_id'], 'condition': 'AI辅助', 'accuracy': row['ai_accuracy']})
+            long_data.append({'participant_id': row['participant_id'], 'condition': '无辅助', 'accuracy': row['no_ai_accuracy']})
+        
+        long_df = pd.DataFrame(long_data)
+        
+        # 执行rm-ANOVA
+        rm_results = perform_rm_anova_analysis(
+            long_df,
+            participant_col='participant_id',
+            condition_col='condition',
+            dv_col='accuracy'
+        )
+        
+        if rm_results:
+            main_effect = rm_results.get('main_effect', pd.DataFrame())
+            if len(main_effect) > 0 and 'Pr(>F)' in main_effect.columns:
+                p_value = main_effect['Pr(>F)'].iloc[0]
+                significance = "显著" if p_value < 0.05 else "不显著"
+                print(f"   统计显著性: {significance} (rm-ANOVA p={p_value:.4f})")
+            else:
+                print(f"   rm-ANOVA分析无结果")
+        else:
+            print(f"   rm-ANOVA分析失败")
 
 if __name__ == "__main__":
     main()

@@ -504,20 +504,53 @@ def analyze_nasa_dimensions(workload_df):
                         })
             
             if len(paired_data) > 1:
-                ai_scores = [pair['ai_score'] for pair in paired_data]
-                no_ai_scores = [pair['no_ai_score'] for pair in paired_data]
+                # 准备长格式数据用于rm-ANOVA
+                long_format_data = []
+                for i, pair in enumerate(paired_data):
+                    long_format_data.append({
+                        'participant_id': f'P{i+1}',
+                        'condition': 'AI辅助',
+                        'workload_score': pair['ai_score']
+                    })
+                    long_format_data.append({
+                        'participant_id': f'P{i+1}',
+                        'condition': '无辅助',
+                        'workload_score': pair['no_ai_score']
+                    })
+                
+                workload_long_df = pd.DataFrame(long_format_data)
                 
                 try:
-                    t_stat, p_value = stats.ttest_rel(ai_scores, no_ai_scores)
-                    print(f"  {dim}配对t检验: t={t_stat:.4f}, p={p_value:.4f}")
+                    # 执行rm-ANOVA分析
+                    rm_results = perform_rm_anova_analysis(
+                        workload_long_df,
+                        participant_col='participant_id',
+                        condition_col='condition',
+                        dv_col='workload_score'
+                    )
                     
-                    # 更新维度数据
-                    for data in dimension_data:
-                        if data['NASA-TLX维度'] == dim:
-                            data['t_value'] = t_stat
-                            data['p_value'] = p_value
-                except:
-                    print(f"  {dim}t检验: 计算失败")
+                    if rm_results:
+                        print_rm_anova_summary(rm_results, f"{dim}维度工作负荷分析")
+                        
+                        # 提取统计量
+                        main_effect = rm_results.get('main_effect', pd.DataFrame())
+                        effect_size = rm_results.get('effect_size_pes', pd.DataFrame())
+                        
+                        f_value = main_effect['F'].iloc[0] if len(main_effect) > 0 and 'F' in main_effect.columns else np.nan
+                        p_value = main_effect['Pr(>F)'].iloc[0] if len(main_effect) > 0 and 'Pr(>F)' in main_effect.columns else np.nan
+                        pes_value = effect_size['pes'].iloc[0] if len(effect_size) > 0 and 'pes' in effect_size.columns else np.nan
+                        
+                        # 更新维度数据
+                        for data in dimension_data:
+                            if data['NASA-TLX维度'] == dim:
+                                data['f_value'] = f_value
+                                data['p_value'] = p_value
+                                data['partial_eta_squared'] = pes_value
+                                data['analysis_type'] = 'RM_ANOVA'
+                    else:
+                        print(f"  {dim}rm-ANOVA分析失败")
+                except Exception as e:
+                    print(f"  {dim}rm-ANOVA分析失败: {e}")
     
     return pd.DataFrame(dimension_data)
 
