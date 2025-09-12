@@ -14,6 +14,12 @@ import json
 from scipy import stats
 import re
 
+# 导入rm-ANOVA分析模块
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utils'))
+from rm_anova_analysis import perform_rm_anova_analysis, print_rm_anova_summary
+
 def load_data_and_create_groups():
     """加载数据并创建分组变量"""
     print("正在读取数据文件...")
@@ -219,13 +225,14 @@ def calculate_trust_statistics(trust_df):
             })
             print(f"  {ai_label}: n={len(ai_scores)}, M={ai_scores.mean():.2f}")
     
-    # 执行AI使用顺序的t检验
+    # 执行AI使用顺序的独立样本分析（信任度量表是被试间设计）
     ai_first_scores = trust_df[trust_df['ai_first'] == True]['trust_avg_score']
     ai_second_scores = trust_df[trust_df['ai_first'] == False]['trust_avg_score']
     
     if len(ai_first_scores) > 0 and len(ai_second_scores) > 0:
         t_stat, p_value = stats.ttest_ind(ai_first_scores, ai_second_scores)
         print(f"  AI使用顺序独立t检验: t={t_stat:.4f}, p={p_value:.4f}")
+        print("  注意：信任度量表为被试间设计，使用独立样本t检验")
         
         # 添加检验结果到统计数据
         for i, ai_first in enumerate([True, False]):
@@ -235,6 +242,7 @@ def calculate_trust_statistics(trust_df):
                 stat['t_value'] = t_stat
                 stat['p_value'] = p_value
                 stat['effect_size'] = calculate_cohens_d_independent(ai_first_scores, ai_second_scores)
+                stat['analysis_type'] = 'INDEPENDENT_T_TEST'
     
     return pd.DataFrame(stats_data)
 

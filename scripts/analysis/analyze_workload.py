@@ -14,6 +14,12 @@ import json
 from scipy import stats
 import re
 
+# 导入rm-ANOVA分析模块
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utils'))
+from rm_anova_analysis import perform_rm_anova_analysis, print_rm_anova_summary
+
 def load_data_and_create_groups():
     """加载数据并创建分组变量"""
     print("正在读取数据文件...")
@@ -258,22 +264,34 @@ def calculate_workload_statistics(workload_df):
             })
             print(f"  {condition}: n={len(nasa_scores)}, M={nasa_scores.mean():.2f}, SD={nasa_scores.std():.2f}")
     
-    # 执行总体t检验（配对样本）
-    paired_data = get_paired_data(workload_df)
-    if len(paired_data) > 0:
-        ai_scores = [pair['ai_score'] for pair in paired_data]
-        no_ai_scores = [pair['no_ai_score'] for pair in paired_data]
+    # 执行总体rm-ANOVA
+    print(f"\n执行总体rm-ANOVA分析:")
+    rm_results = perform_rm_anova_analysis(
+        workload_df,
+        participant_col='ID',
+        condition_col='condition_type',
+        dv_col='nasa_tlx_total'
+    )
+    
+    if rm_results:
+        print_rm_anova_summary(rm_results, "总体认知负荷分析")
         
-        t_stat, p_value = stats.ttest_rel(ai_scores, no_ai_scores)
-        print(f"  总体配对t检验: t={t_stat:.4f}, p={p_value:.4f} (n={len(paired_data)}对)")
+        # 提取统计量
+        main_effect = rm_results.get('main_effect', pd.DataFrame())
+        effect_size = rm_results.get('effect_size_pes', pd.DataFrame())
+        
+        f_value = main_effect['F'].iloc[0] if len(main_effect) > 0 and 'F' in main_effect.columns else np.nan
+        p_value = main_effect['Pr(>F)'].iloc[0] if len(main_effect) > 0 and 'Pr(>F)' in main_effect.columns else np.nan
+        pes_value = effect_size['pes'].iloc[0] if len(effect_size) > 0 and 'pes' in effect_size.columns else np.nan
         
         # 添加检验结果到统计数据
-        for i, condition in enumerate(['AI辅助组', '无辅助组']):
+        for condition in ['AI辅助组', '无辅助组']:
             matching_stats = [s for s in stats_data if s['分析维度'] == '总体' and s['分组'] == condition]
             for stat in matching_stats:
-                stat['t_value'] = t_stat
+                stat['f_value'] = f_value
                 stat['p_value'] = p_value
-                stat['effect_size'] = calculate_cohens_d_paired(ai_scores, no_ai_scores)
+                stat['partial_eta_squared'] = pes_value
+                stat['analysis_type'] = rm_results.get('analysis_type', 'RM_ANOVA')
     
     # 2. 按科室统计
     print("\n2. 按科室认知负荷统计:")
@@ -298,23 +316,38 @@ def calculate_workload_statistics(workload_df):
                 })
                 print(f"    {condition}: n={len(nasa_scores)}, M={nasa_scores.mean():.2f}")
         
-        # 科室内配对t检验
-        dept_paired = get_paired_data(dept_data)
-        if len(dept_paired) > 1:
-            try:
-                dept_ai = [pair['ai_score'] for pair in dept_paired]
-                dept_no_ai = [pair['no_ai_score'] for pair in dept_paired]
-                t_stat, p_value = stats.ttest_rel(dept_ai, dept_no_ai)
-                print(f"    {dept}科室配对t检验: t={t_stat:.4f}, p={p_value:.4f}")
+        # 科室内rm-ANOVA
+        if len(dept_data) >= 4:  # 至少需要2个参与者×2个条件
+            print(f"    执行{dept}科室rm-ANOVA:")
+            dept_rm_results = perform_rm_anova_analysis(
+                dept_data,
+                participant_col='ID',
+                condition_col='condition_type',
+                dv_col='nasa_tlx_total'
+            )
+            
+            if dept_rm_results:
+                print_rm_anova_summary(dept_rm_results, f"{dept}科室认知负荷分析")
+                
+                # 提取统计量
+                main_effect = dept_rm_results.get('main_effect', pd.DataFrame())
+                effect_size = dept_rm_results.get('effect_size_pes', pd.DataFrame())
+                
+                f_value = main_effect['F'].iloc[0] if len(main_effect) > 0 and 'F' in main_effect.columns else np.nan
+                p_value = main_effect['Pr(>F)'].iloc[0] if len(main_effect) > 0 and 'Pr(>F)' in main_effect.columns else np.nan
+                pes_value = effect_size['pes'].iloc[0] if len(effect_size) > 0 and 'pes' in effect_size.columns else np.nan
                 
                 # 添加检验结果
                 dept_stats = [s for s in stats_data if s['分析维度'] == f'科室_{dept}']
                 for stat in dept_stats:
-                    stat['t_value'] = t_stat
+                    stat['f_value'] = f_value
                     stat['p_value'] = p_value
-                    stat['effect_size'] = calculate_cohens_d_paired(dept_ai, dept_no_ai)
-            except:
-                print(f"    {dept}科室t检验: 样本不足")
+                    stat['partial_eta_squared'] = pes_value
+                    stat['analysis_type'] = dept_rm_results.get('analysis_type', 'RM_ANOVA')
+            else:
+                print(f"    {dept}科室rm-ANOVA分析失败")
+        else:
+            print(f"    {dept}科室: 数据不足，跳过rm-ANOVA分析")
     
     # 3. 按年资统计
     print("\n3. 按年资认知负荷统计:")
@@ -342,23 +375,38 @@ def calculate_workload_statistics(workload_df):
                 })
                 print(f"    {condition}: n={len(nasa_scores)}, M={nasa_scores.mean():.2f}")
         
-        # 年资内配对t检验
-        seniority_paired = get_paired_data(seniority_data)
-        if len(seniority_paired) > 1:
-            try:
-                seniority_ai = [pair['ai_score'] for pair in seniority_paired]
-                seniority_no_ai = [pair['no_ai_score'] for pair in seniority_paired]
-                t_stat, p_value = stats.ttest_rel(seniority_ai, seniority_no_ai)
-                print(f"    {seniority}年资配对t检验: t={t_stat:.4f}, p={p_value:.4f}")
+        # 年资内rm-ANOVA
+        if len(seniority_data) >= 4:  # 至少需要2个参与者×2个条件
+            print(f"    执行{seniority}年资rm-ANOVA:")
+            seniority_rm_results = perform_rm_anova_analysis(
+                seniority_data,
+                participant_col='ID',
+                condition_col='condition_type',
+                dv_col='nasa_tlx_total'
+            )
+            
+            if seniority_rm_results:
+                print_rm_anova_summary(seniority_rm_results, f"{seniority}年资认知负荷分析")
+                
+                # 提取统计量
+                main_effect = seniority_rm_results.get('main_effect', pd.DataFrame())
+                effect_size = seniority_rm_results.get('effect_size_pes', pd.DataFrame())
+                
+                f_value = main_effect['F'].iloc[0] if len(main_effect) > 0 and 'F' in main_effect.columns else np.nan
+                p_value = main_effect['Pr(>F)'].iloc[0] if len(main_effect) > 0 and 'Pr(>F)' in main_effect.columns else np.nan
+                pes_value = effect_size['pes'].iloc[0] if len(effect_size) > 0 and 'pes' in effect_size.columns else np.nan
                 
                 # 添加检验结果
                 seniority_stats = [s for s in stats_data if s['分析维度'] == f'年资_{seniority}']
                 for stat in seniority_stats:
-                    stat['t_value'] = t_stat
+                    stat['f_value'] = f_value
                     stat['p_value'] = p_value
-                    stat['effect_size'] = calculate_cohens_d_paired(seniority_ai, seniority_no_ai)
-            except:
-                print(f"    {seniority}年资t检验: 样本不足")
+                    stat['partial_eta_squared'] = pes_value
+                    stat['analysis_type'] = seniority_rm_results.get('analysis_type', 'RM_ANOVA')
+            else:
+                print(f"    {seniority}年资rm-ANOVA分析失败")
+        else:
+            print(f"    {seniority}年资: 数据不足，跳过rm-ANOVA分析")
     
     return pd.DataFrame(stats_data)
 

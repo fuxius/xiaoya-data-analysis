@@ -13,6 +13,12 @@ import numpy as np
 import json
 from scipy import stats
 
+# 导入rm-ANOVA分析模块
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utils'))
+from rm_anova_analysis import perform_rm_anova_analysis, print_rm_anova_summary
+
 def load_data_and_create_groups():
     """加载数据并创建分组变量"""
     print("正在读取数据文件...")
@@ -137,111 +143,145 @@ def create_long_format_data(efficiency_df):
     return efficiency_long_df
 
 def calculate_efficiency_statistics(efficiency_df):
-    """计算诊断效率统计分析 - 被试内设计配对t检验"""
-    print("\n=== 诊断效率统计分析 ===")
+    """计算诊断效率统计分析 - 使用rm-ANOVA替代配对t检验"""
+    print("\n=== 诊断效率统计分析 (rm-ANOVA) ===")
     
     stats_data = []
+    
+    # 准备长格式数据用于rm-ANOVA
+    long_format_data = []
+    for idx, row in efficiency_df.iterrows():
+        # AI辅助条件
+        long_format_data.append({
+            'participant_id': row['ID'],
+            'condition': 'AI辅助',
+            'avg_time': row['ai_avg_time'],
+            'seniority': row['年资分类'],
+            'department': row['科室'],
+            'hospital': row['hospital']
+        })
+        
+        # 无辅助条件
+        long_format_data.append({
+            'participant_id': row['ID'],
+            'condition': '无辅助',
+            'avg_time': row['no_ai_avg_time'],
+            'seniority': row['年资分类'],
+            'department': row['科室'],
+            'hospital': row['hospital']
+        })
+    
+    efficiency_long_df = pd.DataFrame(long_format_data)
     
     # 1. 总体统计
     print("\n1. 总体效率统计:")
     
-    # AI辅助组统计
-    ai_times = efficiency_df['ai_avg_time']
-    stats_data.append({
-        '分析维度': '总体',
-        '分组': 'AI辅助组',
-        '样本数': len(ai_times),
-        '平均时间_秒': round(ai_times.mean(), 2),
-        '标准差_秒': round(ai_times.std(), 2),
-        '中位数_秒': round(ai_times.median(), 2),
-        '最小值_秒': round(ai_times.min(), 2),
-        '最大值_秒': round(ai_times.max(), 2),
-        '平均时间_分钟': round(ai_times.mean() / 60, 2)
-    })
-    print(f"  AI辅助组: n={len(ai_times)}, M={ai_times.mean():.2f}s ({ai_times.mean()/60:.2f}min), SD={ai_times.std():.2f}s")
+    # 描述性统计
+    ai_data = efficiency_long_df[efficiency_long_df['condition'] == 'AI辅助']
+    no_ai_data = efficiency_long_df[efficiency_long_df['condition'] == '无辅助']
     
-    # 无辅助组统计
-    no_ai_times = efficiency_df['no_ai_avg_time']
-    stats_data.append({
-        '分析维度': '总体',
-        '分组': '无辅助组',
-        '样本数': len(no_ai_times),
-        '平均时间_秒': round(no_ai_times.mean(), 2),
-        '标准差_秒': round(no_ai_times.std(), 2),
-        '中位数_秒': round(no_ai_times.median(), 2),
-        '最小值_秒': round(no_ai_times.min(), 2),
-        '最大值_秒': round(no_ai_times.max(), 2),
-        '平均时间_分钟': round(no_ai_times.mean() / 60, 2)
-    })
-    print(f"  无辅助组: n={len(no_ai_times)}, M={no_ai_times.mean():.2f}s ({no_ai_times.mean()/60:.2f}min), SD={no_ai_times.std():.2f}s")
+    for condition, data in [('AI辅助组', ai_data), ('无辅助组', no_ai_data)]:
+        times = data['avg_time']
+        stats_data.append({
+            '分析维度': '总体',
+            '分组': condition,
+            '样本数': len(times),
+            '平均时间_秒': round(times.mean(), 2),
+            '标准差_秒': round(times.std(), 2),
+            '中位数_秒': round(times.median(), 2),
+            '最小值_秒': round(times.min(), 2),
+            '最大值_秒': round(times.max(), 2),
+            '平均时间_分钟': round(times.mean() / 60, 2)
+        })
+        print(f"  {condition}: n={len(times)}, M={times.mean():.2f}s ({times.mean()/60:.2f}min), SD={times.std():.2f}s")
     
-    # 执行配对样本t检验
-    if len(ai_times) > 0 and len(no_ai_times) > 0:
-        t_stat, p_value = stats.ttest_rel(ai_times, no_ai_times)
-        effect_size = calculate_cohens_d_paired(ai_times, no_ai_times)
-        print(f"  总体配对样本t检验: t={t_stat:.4f}, p={p_value:.4f}, Cohen's d={effect_size:.3f}")
+    # 执行rm-ANOVA
+    print(f"\n执行总体rm-ANOVA分析:")
+    rm_results = perform_rm_anova_analysis(
+        efficiency_long_df,
+        participant_col='participant_id',
+        condition_col='condition',
+        dv_col='avg_time'
+    )
+    
+    if rm_results:
+        print_rm_anova_summary(rm_results, "总体效率分析")
+        
+        # 提取统计量
+        main_effect = rm_results.get('main_effect', pd.DataFrame())
+        effect_size = rm_results.get('effect_size_pes', pd.DataFrame())
+        
+        f_value = main_effect['F'].iloc[0] if len(main_effect) > 0 and 'F' in main_effect.columns else np.nan
+        p_value = main_effect['Pr(>F)'].iloc[0] if len(main_effect) > 0 and 'Pr(>F)' in main_effect.columns else np.nan
+        pes_value = effect_size['pes'].iloc[0] if len(effect_size) > 0 and 'pes' in effect_size.columns else np.nan
         
         # 添加检验结果到统计数据
         for stat in stats_data:
             if stat['分析维度'] == '总体':
-                stat['t_value'] = t_stat
+                stat['f_value'] = f_value
                 stat['p_value'] = p_value
-                stat['effect_size'] = effect_size
+                stat['partial_eta_squared'] = pes_value
+                stat['analysis_type'] = rm_results.get('analysis_type', 'RM_ANOVA')
     
     # 2. 按科室统计
     print("\n2. 按科室效率统计:")
     for dept in efficiency_df['科室'].unique():
-        dept_data = efficiency_df[efficiency_df['科室'] == dept]
-        if len(dept_data) == 0:
+        dept_long_data = efficiency_long_df[efficiency_long_df['department'] == dept]
+        
+        if len(dept_long_data) < 4:  # 至少需要2个参与者×2个条件
+            print(f"  {dept}: 数据不足，跳过分析")
             continue
             
         print(f"\n  {dept}:")
         
-        # AI辅助组统计
-        dept_ai_times = dept_data['ai_avg_time']
-        stats_data.append({
-            '分析维度': f'科室_{dept}',
-            '分组': 'AI辅助组',
-            '样本数': len(dept_ai_times),
-            '平均时间_秒': round(dept_ai_times.mean(), 2),
-            '标准差_秒': round(dept_ai_times.std(), 2),
-            '中位数_秒': round(dept_ai_times.median(), 2),
-            '最小值_秒': round(dept_ai_times.min(), 2),
-            '最大值_秒': round(dept_ai_times.max(), 2),
-            '平均时间_分钟': round(dept_ai_times.mean() / 60, 2)
-        })
-        print(f"    AI辅助组: n={len(dept_ai_times)}, M={dept_ai_times.mean():.2f}s ({dept_ai_times.mean()/60:.2f}min)")
+        # 描述性统计
+        for condition in ['AI辅助', '无辅助']:
+            condition_data = dept_long_data[dept_long_data['condition'] == condition]
+            times = condition_data['avg_time']
+            
+            condition_label = f'{condition}组'
+            stats_data.append({
+                '分析维度': f'科室_{dept}',
+                '分组': condition_label,
+                '样本数': len(times),
+                '平均时间_秒': round(times.mean(), 2),
+                '标准差_秒': round(times.std(), 2),
+                '中位数_秒': round(times.median(), 2),
+                '最小值_秒': round(times.min(), 2),
+                '最大值_秒': round(times.max(), 2),
+                '平均时间_分钟': round(times.mean() / 60, 2)
+            })
+            print(f"    {condition_label}: n={len(times)}, M={times.mean():.2f}s ({times.mean()/60:.2f}min)")
         
-        # 无辅助组统计
-        dept_no_ai_times = dept_data['no_ai_avg_time']
-        stats_data.append({
-            '分析维度': f'科室_{dept}',
-            '分组': '无辅助组',
-            '样本数': len(dept_no_ai_times),
-            '平均时间_秒': round(dept_no_ai_times.mean(), 2),
-            '标准差_秒': round(dept_no_ai_times.std(), 2),
-            '中位数_秒': round(dept_no_ai_times.median(), 2),
-            '最小值_秒': round(dept_no_ai_times.min(), 2),
-            '最大值_秒': round(dept_no_ai_times.max(), 2),
-            '平均时间_分钟': round(dept_no_ai_times.mean() / 60, 2)
-        })
-        print(f"    无辅助组: n={len(dept_no_ai_times)}, M={dept_no_ai_times.mean():.2f}s ({dept_no_ai_times.mean()/60:.2f}min)")
+        # 科室内rm-ANOVA
+        print(f"    执行{dept}科室rm-ANOVA:")
+        dept_rm_results = perform_rm_anova_analysis(
+            dept_long_data,
+            participant_col='participant_id',
+            condition_col='condition',
+            dv_col='avg_time'
+        )
         
-        # 科室内配对t检验
-        if len(dept_data) > 1:
-            try:
-                t_stat, p_value = stats.ttest_rel(dept_ai_times, dept_no_ai_times)
-                effect_size = calculate_cohens_d_paired(dept_ai_times, dept_no_ai_times)
-                print(f"    {dept}科室配对t检验: t={t_stat:.4f}, p={p_value:.4f}, Cohen's d={effect_size:.3f}")
-                
-                # 添加检验结果
-                dept_stats = [s for s in stats_data if s['分析维度'] == f'科室_{dept}']
-                for stat in dept_stats:
-                    stat['t_value'] = t_stat
-                    stat['p_value'] = p_value
-                    stat['effect_size'] = effect_size
-            except:
-                print(f"    {dept}科室t检验: 计算失败")
+        if dept_rm_results:
+            print_rm_anova_summary(dept_rm_results, f"{dept}科室效率分析")
+            
+            # 提取统计量并添加到结果中
+            main_effect = dept_rm_results.get('main_effect', pd.DataFrame())
+            effect_size = dept_rm_results.get('effect_size_pes', pd.DataFrame())
+            
+            f_value = main_effect['F'].iloc[0] if len(main_effect) > 0 and 'F' in main_effect.columns else np.nan
+            p_value = main_effect['Pr(>F)'].iloc[0] if len(main_effect) > 0 and 'Pr(>F)' in main_effect.columns else np.nan
+            pes_value = effect_size['pes'].iloc[0] if len(effect_size) > 0 and 'pes' in effect_size.columns else np.nan
+            
+            # 添加检验结果
+            dept_stats = [s for s in stats_data if s['分析维度'] == f'科室_{dept}']
+            for stat in dept_stats:
+                stat['f_value'] = f_value
+                stat['p_value'] = p_value
+                stat['partial_eta_squared'] = pes_value
+                stat['analysis_type'] = dept_rm_results.get('analysis_type', 'RM_ANOVA')
+        else:
+            print(f"    {dept}科室rm-ANOVA分析失败")
     
     # 3. 按年资统计
     print("\n3. 按年资效率统计:")
@@ -431,9 +471,8 @@ def main():
         
         print(f"  效果评价: {effect_desc}")
         
-        # 配对t检验结果
-        t_stat, p_value = stats.ttest_rel(efficiency_df['ai_avg_time'], efficiency_df['no_ai_avg_time'])
-        print(f"  配对t检验: t={t_stat:.4f}, p={p_value:.4f}")
+        # rm-ANOVA结果已在统计分析中显示
+        print(f"  rm-ANOVA结果详见上方统计分析")
     
     # 按科室效果（配对分析）
     if '科室' in efficiency_df.columns:

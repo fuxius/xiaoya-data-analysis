@@ -13,6 +13,12 @@ import numpy as np
 import json
 from scipy import stats
 
+# 导入rm-ANOVA分析模块
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utils'))
+from rm_anova_analysis import perform_rm_anova_analysis, print_rm_anova_summary
+
 def load_data_and_create_groups():
     """加载数据并创建分组变量"""
     print("正在读取数据文件...")
@@ -156,224 +162,268 @@ def create_long_format_confidence_data(confidence_df):
     return confidence_long_df
 
 def calculate_confidence_statistics(confidence_df):
-    """计算诊断信心统计分析 - 被试内设计配对t检验"""
-    print("\n=== 诊断信心统计分析 ===")
+    """计算诊断信心统计分析 - 使用rm-ANOVA替代配对t检验"""
+    print("\n=== 诊断信心统计分析 (rm-ANOVA) ===")
     
     stats_data = []
+    
+    # 准备长格式数据用于rm-ANOVA
+    long_format_data = []
+    for idx, row in confidence_df.iterrows():
+        # AI辅助条件
+        long_format_data.append({
+            'participant_id': row['ID'],
+            'condition': 'AI辅助',
+            'confidence_score': row['ai_avg_confidence'],
+            'seniority': row['年资分类'],
+            'department': row['科室'],
+            'hospital': row['hospital']
+        })
+        
+        # 无辅助条件
+        long_format_data.append({
+            'participant_id': row['ID'],
+            'condition': '无辅助',
+            'confidence_score': row['no_ai_avg_confidence'],
+            'seniority': row['年资分类'],
+            'department': row['科室'],
+            'hospital': row['hospital']
+        })
+    
+    confidence_long_df = pd.DataFrame(long_format_data)
     
     # 1. 总体统计
     print("\n1. 总体信心统计:")
     
-    # AI辅助组统计
-    ai_confidence = confidence_df['ai_avg_confidence']
-    stats_data.append({
-        '分析维度': '总体',
-        '分组': 'AI辅助组',
-        '样本数': len(ai_confidence),
-        '平均信心得分': round(ai_confidence.mean(), 3),
-        '标准差': round(ai_confidence.std(), 3),
-        '中位数': round(ai_confidence.median(), 3),
-        '最小值': round(ai_confidence.min(), 3),
-        '最大值': round(ai_confidence.max(), 3),
-        '信心水平描述': get_confidence_description(ai_confidence.mean())
-    })
-    print(f"  AI辅助组: n={len(ai_confidence)}, M={ai_confidence.mean():.3f}, SD={ai_confidence.std():.3f}")
+    # 描述性统计
+    ai_data = confidence_long_df[confidence_long_df['condition'] == 'AI辅助']
+    no_ai_data = confidence_long_df[confidence_long_df['condition'] == '无辅助']
     
-    # 无辅助组统计
-    no_ai_confidence = confidence_df['no_ai_avg_confidence']
-    stats_data.append({
-        '分析维度': '总体',
-        '分组': '无辅助组',
-        '样本数': len(no_ai_confidence),
-        '平均信心得分': round(no_ai_confidence.mean(), 3),
-        '标准差': round(no_ai_confidence.std(), 3),
-        '中位数': round(no_ai_confidence.median(), 3),
-        '最小值': round(no_ai_confidence.min(), 3),
-        '最大值': round(no_ai_confidence.max(), 3),
-        '信心水平描述': get_confidence_description(no_ai_confidence.mean())
-    })
-    print(f"  无辅助组: n={len(no_ai_confidence)}, M={no_ai_confidence.mean():.3f}, SD={no_ai_confidence.std():.3f}")
+    for condition, data in [('AI辅助组', ai_data), ('无辅助组', no_ai_data)]:
+        confidence_scores = data['confidence_score']
+        stats_data.append({
+            '分析维度': '总体',
+            '分组': condition,
+            '样本数': len(confidence_scores),
+            '平均信心得分': round(confidence_scores.mean(), 3),
+            '标准差': round(confidence_scores.std(), 3),
+            '中位数': round(confidence_scores.median(), 3),
+            '最小值': round(confidence_scores.min(), 3),
+            '最大值': round(confidence_scores.max(), 3),
+            '信心水平描述': get_confidence_description(confidence_scores.mean())
+        })
+        print(f"  {condition}: n={len(confidence_scores)}, M={confidence_scores.mean():.3f}, SD={confidence_scores.std():.3f}")
     
-    # 执行配对样本t检验
-    if len(ai_confidence) > 0 and len(no_ai_confidence) > 0:
-        t_stat, p_value = stats.ttest_rel(ai_confidence, no_ai_confidence)
-        effect_size = calculate_cohens_d_paired(ai_confidence, no_ai_confidence)
-        print(f"  总体配对样本t检验: t={t_stat:.4f}, p={p_value:.4f}, Cohen's d={effect_size:.3f}")
+    # 执行rm-ANOVA
+    print(f"\n执行总体rm-ANOVA分析:")
+    rm_results = perform_rm_anova_analysis(
+        confidence_long_df,
+        participant_col='participant_id',
+        condition_col='condition',
+        dv_col='confidence_score'
+    )
+    
+    if rm_results:
+        print_rm_anova_summary(rm_results, "总体信心分析")
+        
+        # 提取统计量
+        main_effect = rm_results.get('main_effect', pd.DataFrame())
+        effect_size = rm_results.get('effect_size_pes', pd.DataFrame())
+        
+        f_value = main_effect['F'].iloc[0] if len(main_effect) > 0 and 'F' in main_effect.columns else np.nan
+        p_value = main_effect['Pr(>F)'].iloc[0] if len(main_effect) > 0 and 'Pr(>F)' in main_effect.columns else np.nan
+        pes_value = effect_size['pes'].iloc[0] if len(effect_size) > 0 and 'pes' in effect_size.columns else np.nan
         
         # 添加检验结果到统计数据
         for stat in stats_data:
             if stat['分析维度'] == '总体':
-                stat['t_value'] = t_stat
+                stat['f_value'] = f_value
                 stat['p_value'] = p_value
-                stat['effect_size'] = effect_size
+                stat['partial_eta_squared'] = pes_value
+                stat['analysis_type'] = rm_results.get('analysis_type', 'RM_ANOVA')
     
     # 2. 按科室统计
     print("\n2. 按科室信心统计:")
     for dept in confidence_df['科室'].unique():
-        dept_data = confidence_df[confidence_df['科室'] == dept]
-        if len(dept_data) == 0:
+        dept_long_data = confidence_long_df[confidence_long_df['department'] == dept]
+        
+        if len(dept_long_data) < 4:  # 至少需要2个参与者×2个条件
+            print(f"  {dept}: 数据不足，跳过分析")
             continue
             
         print(f"\n  {dept}:")
         
-        # AI辅助组统计
-        dept_ai_confidence = dept_data['ai_avg_confidence']
-        stats_data.append({
-            '分析维度': f'科室_{dept}',
-            '分组': 'AI辅助组',
-            '样本数': len(dept_ai_confidence),
-            '平均信心得分': round(dept_ai_confidence.mean(), 3),
-            '标准差': round(dept_ai_confidence.std(), 3),
-            '中位数': round(dept_ai_confidence.median(), 3),
-            '最小值': round(dept_ai_confidence.min(), 3),
-            '最大值': round(dept_ai_confidence.max(), 3),
-            '信心水平描述': get_confidence_description(dept_ai_confidence.mean())
-        })
-        print(f"    AI辅助组: n={len(dept_ai_confidence)}, M={dept_ai_confidence.mean():.3f}")
+        # 描述性统计
+        for condition in ['AI辅助', '无辅助']:
+            condition_data = dept_long_data[dept_long_data['condition'] == condition]
+            confidence_scores = condition_data['confidence_score']
+            
+            condition_label = f'{condition}组'
+            stats_data.append({
+                '分析维度': f'科室_{dept}',
+                '分组': condition_label,
+                '样本数': len(confidence_scores),
+                '平均信心得分': round(confidence_scores.mean(), 3),
+                '标准差': round(confidence_scores.std(), 3),
+                '中位数': round(confidence_scores.median(), 3),
+                '最小值': round(confidence_scores.min(), 3),
+                '最大值': round(confidence_scores.max(), 3),
+                '信心水平描述': get_confidence_description(confidence_scores.mean())
+            })
+            print(f"    {condition_label}: n={len(confidence_scores)}, M={confidence_scores.mean():.3f}")
         
-        # 无辅助组统计
-        dept_no_ai_confidence = dept_data['no_ai_avg_confidence']
-        stats_data.append({
-            '分析维度': f'科室_{dept}',
-            '分组': '无辅助组',
-            '样本数': len(dept_no_ai_confidence),
-            '平均信心得分': round(dept_no_ai_confidence.mean(), 3),
-            '标准差': round(dept_no_ai_confidence.std(), 3),
-            '中位数': round(dept_no_ai_confidence.median(), 3),
-            '最小值': round(dept_no_ai_confidence.min(), 3),
-            '最大值': round(dept_no_ai_confidence.max(), 3),
-            '信心水平描述': get_confidence_description(dept_no_ai_confidence.mean())
-        })
-        print(f"    无辅助组: n={len(dept_no_ai_confidence)}, M={dept_no_ai_confidence.mean():.3f}")
+        # 科室内rm-ANOVA
+        print(f"    执行{dept}科室rm-ANOVA:")
+        dept_rm_results = perform_rm_anova_analysis(
+            dept_long_data,
+            participant_col='participant_id',
+            condition_col='condition',
+            dv_col='confidence_score'
+        )
         
-        # 科室内配对t检验
-        if len(dept_data) > 1:
-            try:
-                t_stat, p_value = stats.ttest_rel(dept_ai_confidence, dept_no_ai_confidence)
-                effect_size = calculate_cohens_d_paired(dept_ai_confidence, dept_no_ai_confidence)
-                print(f"    {dept}科室配对t检验: t={t_stat:.4f}, p={p_value:.4f}, Cohen's d={effect_size:.3f}")
-                
-                # 添加检验结果
-                dept_stats = [s for s in stats_data if s['分析维度'] == f'科室_{dept}']
-                for stat in dept_stats:
-                    stat['t_value'] = t_stat
-                    stat['p_value'] = p_value
-                    stat['effect_size'] = effect_size
-            except:
-                print(f"    {dept}科室t检验: 计算失败")
+        if dept_rm_results:
+            print_rm_anova_summary(dept_rm_results, f"{dept}科室信心分析")
+            
+            # 提取统计量
+            main_effect = dept_rm_results.get('main_effect', pd.DataFrame())
+            effect_size = dept_rm_results.get('effect_size_pes', pd.DataFrame())
+            
+            f_value = main_effect['F'].iloc[0] if len(main_effect) > 0 and 'F' in main_effect.columns else np.nan
+            p_value = main_effect['Pr(>F)'].iloc[0] if len(main_effect) > 0 and 'Pr(>F)' in main_effect.columns else np.nan
+            pes_value = effect_size['pes'].iloc[0] if len(effect_size) > 0 and 'pes' in effect_size.columns else np.nan
+            
+            # 添加检验结果
+            dept_stats = [s for s in stats_data if s['分析维度'] == f'科室_{dept}']
+            for stat in dept_stats:
+                stat['f_value'] = f_value
+                stat['p_value'] = p_value
+                stat['partial_eta_squared'] = pes_value
+                stat['analysis_type'] = dept_rm_results.get('analysis_type', 'RM_ANOVA')
+        else:
+            print(f"    {dept}科室rm-ANOVA分析失败")
     
-    # 3. 按年资统计 (使用配对t检验)
+    # 3. 按年资统计
     print("\n3. 按年资信心统计:")
     for seniority in confidence_df['年资分类'].unique():
         if seniority == '未知':
             continue
             
-        seniority_data = confidence_df[confidence_df['年资分类'] == seniority]
-        if len(seniority_data) == 0:
+        seniority_long_data = confidence_long_df[confidence_long_df['seniority'] == seniority]
+        
+        if len(seniority_long_data) < 4:  # 至少需要2个参与者×2个条件
+            print(f"  {seniority}: 数据不足，跳过分析")
             continue
             
         print(f"\n  {seniority}:")
         
-        # AI辅助组统计
-        seniority_ai_confidence = seniority_data['ai_avg_confidence']
-        stats_data.append({
-            '分析维度': f'年资_{seniority}',
-            '分组': 'AI辅助组',
-            '样本数': len(seniority_ai_confidence),
-            '平均信心得分': round(seniority_ai_confidence.mean(), 3),
-            '标准差': round(seniority_ai_confidence.std(), 3),
-            '中位数': round(seniority_ai_confidence.median(), 3),
-            '最小值': round(seniority_ai_confidence.min(), 3),
-            '最大值': round(seniority_ai_confidence.max(), 3),
-            '信心水平描述': get_confidence_description(seniority_ai_confidence.mean())
-        })
-        print(f"    AI辅助组: n={len(seniority_ai_confidence)}, M={seniority_ai_confidence.mean():.3f}")
+        # 描述性统计
+        for condition in ['AI辅助', '无辅助']:
+            condition_data = seniority_long_data[seniority_long_data['condition'] == condition]
+            confidence_scores = condition_data['confidence_score']
+            
+            condition_label = f'{condition}组'
+            stats_data.append({
+                '分析维度': f'年资_{seniority}',
+                '分组': condition_label,
+                '样本数': len(confidence_scores),
+                '平均信心得分': round(confidence_scores.mean(), 3),
+                '标准差': round(confidence_scores.std(), 3),
+                '中位数': round(confidence_scores.median(), 3),
+                '最小值': round(confidence_scores.min(), 3),
+                '最大值': round(confidence_scores.max(), 3),
+                '信心水平描述': get_confidence_description(confidence_scores.mean())
+            })
+            print(f"    {condition_label}: n={len(confidence_scores)}, M={confidence_scores.mean():.3f}")
         
-        # 无辅助组统计
-        seniority_no_ai_confidence = seniority_data['no_ai_avg_confidence']
-        stats_data.append({
-            '分析维度': f'年资_{seniority}',
-            '分组': '无辅助组',
-            '样本数': len(seniority_no_ai_confidence),
-            '平均信心得分': round(seniority_no_ai_confidence.mean(), 3),
-            '标准差': round(seniority_no_ai_confidence.std(), 3),
-            '中位数': round(seniority_no_ai_confidence.median(), 3),
-            '最小值': round(seniority_no_ai_confidence.min(), 3),
-            '最大值': round(seniority_no_ai_confidence.max(), 3),
-            '信心水平描述': get_confidence_description(seniority_no_ai_confidence.mean())
-        })
-        print(f"    无辅助组: n={len(seniority_no_ai_confidence)}, M={seniority_no_ai_confidence.mean():.3f}")
+        # 年资内rm-ANOVA
+        print(f"    执行{seniority}年资rm-ANOVA:")
+        seniority_rm_results = perform_rm_anova_analysis(
+            seniority_long_data,
+            participant_col='participant_id',
+            condition_col='condition',
+            dv_col='confidence_score'
+        )
         
-        # 年资内配对t检验
-        if len(seniority_data) > 1:
-            try:
-                t_stat, p_value = stats.ttest_rel(seniority_ai_confidence, seniority_no_ai_confidence)
-                effect_size = calculate_cohens_d_paired(seniority_ai_confidence, seniority_no_ai_confidence)
-                print(f"    {seniority}年资配对t检验: t={t_stat:.4f}, p={p_value:.4f}")
-                
-                # 添加检验结果
-                seniority_stats = [s for s in stats_data if s['分析维度'] == f'年资_{seniority}']
-                for stat in seniority_stats:
-                    stat['t_value'] = t_stat
-                    stat['p_value'] = p_value
-                    stat['effect_size'] = effect_size
-            except:
-                print(f"    {seniority}年资t检验: 计算失败")
+        if seniority_rm_results:
+            print_rm_anova_summary(seniority_rm_results, f"{seniority}年资信心分析")
+            
+            # 提取统计量
+            main_effect = seniority_rm_results.get('main_effect', pd.DataFrame())
+            effect_size = seniority_rm_results.get('effect_size_pes', pd.DataFrame())
+            
+            f_value = main_effect['F'].iloc[0] if len(main_effect) > 0 and 'F' in main_effect.columns else np.nan
+            p_value = main_effect['Pr(>F)'].iloc[0] if len(main_effect) > 0 and 'Pr(>F)' in main_effect.columns else np.nan
+            pes_value = effect_size['pes'].iloc[0] if len(effect_size) > 0 and 'pes' in effect_size.columns else np.nan
+            
+            # 添加检验结果
+            seniority_stats = [s for s in stats_data if s['分析维度'] == f'年资_{seniority}']
+            for stat in seniority_stats:
+                stat['f_value'] = f_value
+                stat['p_value'] = p_value
+                stat['partial_eta_squared'] = pes_value
+                stat['analysis_type'] = seniority_rm_results.get('analysis_type', 'RM_ANOVA')
+        else:
+            print(f"    {seniority}年资rm-ANOVA分析失败")
     
-    # 4. 按医院统计 (使用配对t检验)
+    # 4. 按医院统计
     print("\n4. 按医院信心统计:")
     for hospital in confidence_df['hospital'].unique():
-        hospital_data = confidence_df[confidence_df['hospital'] == hospital]
-        if len(hospital_data) == 0:
+        hospital_long_data = confidence_long_df[confidence_long_df['hospital'] == hospital]
+        
+        if len(hospital_long_data) < 4:  # 至少需要2个参与者×2个条件
+            print(f"  {hospital}医院: 数据不足，跳过分析")
             continue
             
         print(f"\n  {hospital}医院:")
         
-        # AI辅助组统计
-        hospital_ai_confidence = hospital_data['ai_avg_confidence']
-        stats_data.append({
-            '分析维度': f'医院_{hospital}',
-            '分组': 'AI辅助组',
-            '样本数': len(hospital_ai_confidence),
-            '平均信心得分': round(hospital_ai_confidence.mean(), 3),
-            '标准差': round(hospital_ai_confidence.std(), 3),
-            '中位数': round(hospital_ai_confidence.median(), 3),
-            '最小值': round(hospital_ai_confidence.min(), 3),
-            '最大值': round(hospital_ai_confidence.max(), 3),
-            '信心水平描述': get_confidence_description(hospital_ai_confidence.mean())
-        })
-        print(f"    AI辅助组: n={len(hospital_ai_confidence)}, M={hospital_ai_confidence.mean():.3f}")
+        # 描述性统计
+        for condition in ['AI辅助', '无辅助']:
+            condition_data = hospital_long_data[hospital_long_data['condition'] == condition]
+            confidence_scores = condition_data['confidence_score']
+            
+            condition_label = f'{condition}组'
+            stats_data.append({
+                '分析维度': f'医院_{hospital}',
+                '分组': condition_label,
+                '样本数': len(confidence_scores),
+                '平均信心得分': round(confidence_scores.mean(), 3),
+                '标准差': round(confidence_scores.std(), 3),
+                '中位数': round(confidence_scores.median(), 3),
+                '最小值': round(confidence_scores.min(), 3),
+                '最大值': round(confidence_scores.max(), 3),
+                '信心水平描述': get_confidence_description(confidence_scores.mean())
+            })
+            print(f"    {condition_label}: n={len(confidence_scores)}, M={confidence_scores.mean():.3f}")
         
-        # 无辅助组统计
-        hospital_no_ai_confidence = hospital_data['no_ai_avg_confidence']
-        stats_data.append({
-            '分析维度': f'医院_{hospital}',
-            '分组': '无辅助组',
-            '样本数': len(hospital_no_ai_confidence),
-            '平均信心得分': round(hospital_no_ai_confidence.mean(), 3),
-            '标准差': round(hospital_no_ai_confidence.std(), 3),
-            '中位数': round(hospital_no_ai_confidence.median(), 3),
-            '最小值': round(hospital_no_ai_confidence.min(), 3),
-            '最大值': round(hospital_no_ai_confidence.max(), 3),
-            '信心水平描述': get_confidence_description(hospital_no_ai_confidence.mean())
-        })
-        print(f"    无辅助组: n={len(hospital_no_ai_confidence)}, M={hospital_no_ai_confidence.mean():.3f}")
+        # 医院内rm-ANOVA
+        print(f"    执行{hospital}医院rm-ANOVA:")
+        hospital_rm_results = perform_rm_anova_analysis(
+            hospital_long_data,
+            participant_col='participant_id',
+            condition_col='condition',
+            dv_col='confidence_score'
+        )
         
-        # 医院内配对t检验
-        if len(hospital_data) > 1:
-            try:
-                t_stat, p_value = stats.ttest_rel(hospital_ai_confidence, hospital_no_ai_confidence)
-                effect_size = calculate_cohens_d_paired(hospital_ai_confidence, hospital_no_ai_confidence)
-                print(f"    {hospital}医院配对t检验: t={t_stat:.4f}, p={p_value:.4f}")
-                
-                # 添加检验结果
-                hospital_stats = [s for s in stats_data if s['分析维度'] == f'医院_{hospital}']
-                for stat in hospital_stats:
-                    stat['t_value'] = t_stat
-                    stat['p_value'] = p_value
-                    stat['effect_size'] = effect_size
-            except:
-                print(f"    {hospital}医院t检验: 计算失败")
+        if hospital_rm_results:
+            print_rm_anova_summary(hospital_rm_results, f"{hospital}医院信心分析")
+            
+            # 提取统计量
+            main_effect = hospital_rm_results.get('main_effect', pd.DataFrame())
+            effect_size = hospital_rm_results.get('effect_size_pes', pd.DataFrame())
+            
+            f_value = main_effect['F'].iloc[0] if len(main_effect) > 0 and 'F' in main_effect.columns else np.nan
+            p_value = main_effect['Pr(>F)'].iloc[0] if len(main_effect) > 0 and 'Pr(>F)' in main_effect.columns else np.nan
+            pes_value = effect_size['pes'].iloc[0] if len(effect_size) > 0 and 'pes' in effect_size.columns else np.nan
+            
+            # 添加检验结果
+            hospital_stats = [s for s in stats_data if s['分析维度'] == f'医院_{hospital}']
+            for stat in hospital_stats:
+                stat['f_value'] = f_value
+                stat['p_value'] = p_value
+                stat['partial_eta_squared'] = pes_value
+                stat['analysis_type'] = hospital_rm_results.get('analysis_type', 'RM_ANOVA')
+        else:
+            print(f"    {hospital}医院rm-ANOVA分析失败")
     
     return pd.DataFrame(stats_data)
 
@@ -513,9 +563,8 @@ def main():
         
         print(f"  效果评价: {effect_desc}")
         
-        # 配对t检验结果
-        t_stat, p_value = stats.ttest_rel(confidence_df['ai_avg_confidence'], confidence_df['no_ai_avg_confidence'])
-        print(f"  配对t检验: t={t_stat:.4f}, p={p_value:.4f}")
+        # rm-ANOVA结果已在统计分析中显示
+        print(f"  rm-ANOVA结果详见上方统计分析")
     
     # 按科室效果（配对分析）
     if '科室' in confidence_df.columns:

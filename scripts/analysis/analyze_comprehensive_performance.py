@@ -19,6 +19,12 @@ from sklearn.metrics import (accuracy_score, precision_score, recall_score,
 import warnings
 warnings.filterwarnings('ignore')
 
+# 导入rm-ANOVA分析模块
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utils'))
+from rm_anova_analysis import perform_rm_anova_analysis, print_rm_anova_summary
+
 def load_data():
     """加载所有必要数据"""
     print("正在加载数据文件...")
@@ -469,8 +475,8 @@ def calculate_group_statistics(individual_performance_df):
     return pd.DataFrame(group_stats)
 
 def perform_statistical_tests(individual_performance_df):
-    """执行统计检验"""
-    print("\n正在执行统计检验...")
+    """执行统计检验 - 使用rm-ANOVA替代t检验"""
+    print("\n正在执行rm-ANOVA统计检验...")
     
     test_results = []
     
@@ -490,49 +496,79 @@ def perform_statistical_tests(individual_performance_df):
     for group_type, group_name, filter_func in groupings:
         group_data = filter_func(individual_performance_df)
         
-        # 获取配对数据
-        paired_data = []
-        participant_ids = group_data['participant_id'].unique()
+        # 确保有足够的数据进行分析
+        if len(group_data) < 4:  # 至少需要2个参与者×2个条件
+            print(f"⚠️ {group_type}-{group_name}: 数据不足，跳过分析")
+            continue
         
-        for pid in participant_ids:
-            pid_data = group_data[group_data['participant_id'] == pid]
-            ai_data = pid_data[pid_data['condition'] == 'AI辅助']
-            no_ai_data = pid_data[pid_data['condition'] == '无辅助']
-            
-            if len(ai_data) > 0 and len(no_ai_data) > 0:
-                paired_data.append({
-                    'participant_id': pid,
-                    'ai_accuracy': ai_data.iloc[0]['accuracy'],
-                    'no_ai_accuracy': no_ai_data.iloc[0]['accuracy']
-                })
+        # 检查是否有配对数据
+        participant_counts = group_data.groupby('participant_id')['condition'].nunique()
+        paired_participants = participant_counts[participant_counts >= 2].index
         
-        if len(paired_data) > 1:
-            ai_accuracies = [p['ai_accuracy'] for p in paired_data]
-            no_ai_accuracies = [p['no_ai_accuracy'] for p in paired_data]
+        if len(paired_participants) < 2:
+            print(f"⚠️ {group_type}-{group_name}: 配对数据不足，跳过分析")
+            continue
+        
+        # 筛选有配对数据的参与者
+        paired_data = group_data[group_data['participant_id'].isin(paired_participants)]
+        
+        print(f"\n分析 {group_type}-{group_name} (n={len(paired_participants)}对):")
+        
+        # 执行rm-ANOVA分析
+        rm_results = perform_rm_anova_analysis(
+            paired_data,
+            participant_col='participant_id',
+            condition_col='condition', 
+            dv_col='accuracy'
+        )
+        
+        if rm_results:
+            # 提取关键统计量
+            main_effect = rm_results.get('main_effect', pd.DataFrame())
+            desc_stats = rm_results.get('descriptive_stats', pd.DataFrame())
+            post_hoc = rm_results.get('post_hoc_holm', pd.DataFrame())
+            effect_size = rm_results.get('effect_size_pes', pd.DataFrame())
             
-            # 执行配对t检验
-            t_stat, p_value = stats.ttest_rel(ai_accuracies, no_ai_accuracies)
+            # 计算基本统计量
+            ai_data = paired_data[paired_data['condition'] == 'AI辅助']
+            no_ai_data = paired_data[paired_data['condition'] == '无辅助']
             
-            # 计算效应量
-            differences = np.array(ai_accuracies) - np.array(no_ai_accuracies)
-            cohens_d = differences.mean() / differences.std(ddof=1) if differences.std(ddof=1) != 0 else 0
+            ai_mean = ai_data['accuracy'].mean() if len(ai_data) > 0 else np.nan
+            ai_std = ai_data['accuracy'].std(ddof=1) if len(ai_data) > 0 else np.nan
+            no_ai_mean = no_ai_data['accuracy'].mean() if len(no_ai_data) > 0 else np.nan
+            no_ai_std = no_ai_data['accuracy'].std(ddof=1) if len(no_ai_data) > 0 else np.nan
+            
+            # 提取F值和p值
+            f_value = main_effect['F'].iloc[0] if len(main_effect) > 0 and 'F' in main_effect.columns else np.nan
+            p_value = main_effect['Pr(>F)'].iloc[0] if len(main_effect) > 0 and 'Pr(>F)' in main_effect.columns else np.nan
+            
+            # 提取效应量
+            pes_value = effect_size['pes'].iloc[0] if len(effect_size) > 0 and 'pes' in effect_size.columns else np.nan
+            
+            # 计算平均差异
+            mean_diff = ai_mean - no_ai_mean if not (pd.isna(ai_mean) or pd.isna(no_ai_mean)) else np.nan
             
             test_results.append({
                 'group_type': group_type,
                 'group_name': group_name,
-                'n_pairs': len(paired_data),
-                'ai_mean': np.mean(ai_accuracies),
-                'ai_std': np.std(ai_accuracies, ddof=1),
-                'no_ai_mean': np.mean(no_ai_accuracies),
-                'no_ai_std': np.std(no_ai_accuracies, ddof=1),
-                'mean_difference': np.mean(differences),
-                't_statistic': t_stat,
+                'n_pairs': len(paired_participants),
+                'ai_mean': ai_mean,
+                'ai_std': ai_std,
+                'no_ai_mean': no_ai_mean,
+                'no_ai_std': no_ai_std,
+                'mean_difference': mean_diff,
+                'f_statistic': f_value,
                 'p_value': p_value,
-                'cohens_d': cohens_d,
-                'significance': 'Yes' if p_value < 0.05 else 'No'
+                'partial_eta_squared': pes_value,
+                'analysis_type': rm_results.get('analysis_type', 'RM_ANOVA'),
+                'significance': 'Yes' if not pd.isna(p_value) and p_value < 0.05 else 'No'
             })
             
-            print(f"{group_type}-{group_name}: n={len(paired_data)}, 差异={np.mean(differences):+.4f}, p={p_value:.4f}")
+            # 显示简要结果
+            print_rm_anova_summary(rm_results, f"{group_type}-{group_name}")
+            
+        else:
+            print(f"❌ {group_type}-{group_name}: rm-ANOVA分析失败")
     
     return pd.DataFrame(test_results)
 
@@ -583,23 +619,25 @@ def create_comprehensive_comparison(ai_model_results, group_stats, test_results)
                      (comparison_df['group_type'] == test_row['group_type']) & 
                      (comparison_df['group_name'] == test_row['group_name']))
         
-        # 添加统计信息
+        # 添加统计信息（适应rm-ANOVA结果）
         if mask_ai.any():
-            comparison_df.loc[mask_ai, 't_statistic'] = test_row['t_statistic']
+            comparison_df.loc[mask_ai, 'f_statistic'] = test_row.get('f_statistic', np.nan)
             comparison_df.loc[mask_ai, 'p_value'] = test_row['p_value']
-            comparison_df.loc[mask_ai, 'cohens_d'] = test_row['cohens_d']
+            comparison_df.loc[mask_ai, 'partial_eta_squared'] = test_row.get('partial_eta_squared', np.nan)
+            comparison_df.loc[mask_ai, 'analysis_type'] = test_row.get('analysis_type', 'RM_ANOVA')
             comparison_df.loc[mask_ai, 'significance'] = test_row['significance']
         
         if mask_no_ai.any():
-            comparison_df.loc[mask_no_ai, 't_statistic'] = test_row['t_statistic']
+            comparison_df.loc[mask_no_ai, 'f_statistic'] = test_row.get('f_statistic', np.nan)
             comparison_df.loc[mask_no_ai, 'p_value'] = test_row['p_value']
-            comparison_df.loc[mask_no_ai, 'cohens_d'] = test_row['cohens_d']
+            comparison_df.loc[mask_no_ai, 'partial_eta_squared'] = test_row.get('partial_eta_squared', np.nan)
+            comparison_df.loc[mask_no_ai, 'analysis_type'] = test_row.get('analysis_type', 'RM_ANOVA')
             comparison_df.loc[mask_no_ai, 'significance'] = test_row['significance']
     
     return comparison_df
 
 def generate_summary_report(ai_model_results, test_results):
-    """生成总结报告"""
+    """生成总结报告 - 适应rm-ANOVA结果"""
     print("\n正在生成总结报告...")
     
     report = []
@@ -609,31 +647,51 @@ def generate_summary_report(ai_model_results, test_results):
     report.append(f"AI模型基准准确率: {ai_overall['accuracy']:.4f}")
     
     # 总体效果
-    overall_test = test_results[test_results['group_name'] == '所有医生'].iloc[0]
-    report.append(f"总体效果: AI辅助使医生准确率{overall_test['mean_difference']:+.4f}")
-    report.append(f"统计显著性: {'显著' if overall_test['significance'] == 'Yes' else '不显著'} (p={overall_test['p_value']:.4f})")
-    report.append(f"效应量: Cohen's d = {overall_test['cohens_d']:.4f}")
+    overall_test = test_results[test_results['group_name'] == '所有医生']
+    if len(overall_test) > 0:
+        overall_test = overall_test.iloc[0]
+        report.append(f"总体效果: AI辅助使医生准确率{overall_test['mean_difference']:+.4f}")
+        report.append(f"统计显著性: {'显著' if overall_test['significance'] == 'Yes' else '不显著'} (p={overall_test['p_value']:.4f})")
+        
+        # 适应不同的效应量指标
+        if 'partial_eta_squared' in overall_test and not pd.isna(overall_test['partial_eta_squared']):
+            report.append(f"效应量: 偏η² = {overall_test['partial_eta_squared']:.4f}")
+        elif 'cohens_d' in overall_test and not pd.isna(overall_test.get('cohens_d', np.nan)):
+            report.append(f"效应量: Cohen's d = {overall_test['cohens_d']:.4f}")
+        
+        # 报告分析方法
+        analysis_type = overall_test.get('analysis_type', 'RM_ANOVA')
+        report.append(f"分析方法: {analysis_type}")
     
     # 年资差异
     seniority_tests = test_results[test_results['group_type'] == '年资']
     if len(seniority_tests) > 0:
         report.append("\n年资差异:")
         for idx, row in seniority_tests.iterrows():
-            report.append(f"  {row['group_name']}: 准确率提升{row['mean_difference']:+.4f} (p={row['p_value']:.4f})")
+            effect_info = ""
+            if 'partial_eta_squared' in row and not pd.isna(row['partial_eta_squared']):
+                effect_info = f", η²={row['partial_eta_squared']:.3f}"
+            report.append(f"  {row['group_name']}: 准确率提升{row['mean_difference']:+.4f} (p={row['p_value']:.4f}{effect_info})")
     
     # 科室差异
     dept_tests = test_results[test_results['group_type'] == '科室']
     if len(dept_tests) > 0:
         report.append("\n科室差异:")
         for idx, row in dept_tests.iterrows():
-            report.append(f"  {row['group_name']}: 准确率提升{row['mean_difference']:+.4f} (p={row['p_value']:.4f})")
+            effect_info = ""
+            if 'partial_eta_squared' in row and not pd.isna(row['partial_eta_squared']):
+                effect_info = f", η²={row['partial_eta_squared']:.3f}"
+            report.append(f"  {row['group_name']}: 准确率提升{row['mean_difference']:+.4f} (p={row['p_value']:.4f}{effect_info})")
     
     # 医院差异
     hospital_tests = test_results[test_results['group_type'] == '医院']
     if len(hospital_tests) > 0:
         report.append("\n医院差异:")
         for idx, row in hospital_tests.iterrows():
-            report.append(f"  医院{row['group_name']}: 准确率提升{row['mean_difference']:+.4f} (p={row['p_value']:.4f})")
+            effect_info = ""
+            if 'partial_eta_squared' in row and not pd.isna(row['partial_eta_squared']):
+                effect_info = f", η²={row['partial_eta_squared']:.3f}"
+            report.append(f"  医院{row['group_name']}: 准确率提升{row['mean_difference']:+.4f} (p={row['p_value']:.4f}{effect_info})")
     
     return report
 

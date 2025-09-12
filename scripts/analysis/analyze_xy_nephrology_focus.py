@@ -24,6 +24,12 @@ from sklearn.metrics import (accuracy_score, precision_score, recall_score,
 import warnings
 warnings.filterwarnings('ignore')
 
+# 导入rm-ANOVA分析模块
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utils'))
+from rm_anova_analysis import perform_rm_anova_analysis, print_rm_anova_summary
+
 def load_data():
     """加载所有必要数据"""
     print("=== XY-Nephrology专项分析 ===")
@@ -390,20 +396,52 @@ def perform_xy_statistical_analysis(individual_performance_df):
     
     paired_df = pd.DataFrame(paired_data)
     
-    # 总体统计检验
+    # 总体统计检验 - 使用rm-ANOVA
     if len(paired_data) > 1:
         ai_accuracies = [p['ai_accuracy'] for p in paired_data]
         no_ai_accuracies = [p['no_ai_accuracy'] for p in paired_data]
-        
-        t_stat, p_value = stats.ttest_rel(ai_accuracies, no_ai_accuracies)
         
         print(f"   配对样本数: {len(paired_data)}")
         print(f"   AI辅助准确率: {np.mean(ai_accuracies):.1%} ± {np.std(ai_accuracies, ddof=1):.1%}")
         print(f"   无辅助准确率: {np.mean(no_ai_accuracies):.1%} ± {np.std(no_ai_accuracies, ddof=1):.1%}")
         print(f"   平均提升: {np.mean([p['difference'] for p in paired_data]):+.1%}")
-        print(f"   t统计量: {t_stat:.3f}")
-        print(f"   p值: {p_value:.4f}")
-        print(f"   统计显著性: {'是' if p_value < 0.05 else '否'}")
+        
+        # 准备长格式数据进行rm-ANOVA
+        long_data = []
+        for p in paired_data:
+            long_data.extend([
+                {'participant_id': p['participant_id'], 'condition': 'AI辅助', 'accuracy': p['ai_accuracy'], 'seniority': p['seniority']},
+                {'participant_id': p['participant_id'], 'condition': '无辅助', 'accuracy': p['no_ai_accuracy'], 'seniority': p['seniority']}
+            ])
+        
+        long_df = pd.DataFrame(long_data)
+        
+        # 执行rm-ANOVA
+        print(f"\n   执行rm-ANOVA分析:")
+        rm_results = perform_rm_anova_analysis(
+            long_df,
+            participant_col='participant_id',
+            condition_col='condition',
+            dv_col='accuracy'
+        )
+        
+        if rm_results:
+            print_rm_anova_summary(rm_results, "XY-Nephrology总体分析")
+            
+            # 提取统计量
+            main_effect = rm_results.get('main_effect', pd.DataFrame())
+            if len(main_effect) > 0 and 'Pr(>F)' in main_effect.columns:
+                p_value = main_effect['Pr(>F)'].iloc[0]
+                f_value = main_effect['F'].iloc[0] if 'F' in main_effect.columns else np.nan
+                print(f"   F统计量: {f_value:.3f}")
+                print(f"   p值: {p_value:.4f}")
+                print(f"   统计显著性: {'是' if p_value < 0.05 else '否'}")
+        else:
+            # 回退到t检验
+            t_stat, p_value = stats.ttest_rel(ai_accuracies, no_ai_accuracies)
+            print(f"   t统计量: {t_stat:.3f}")
+            print(f"   p值: {p_value:.4f}")
+            print(f"   统计显著性: {'是' if p_value < 0.05 else '否'}")
     
     # 年资分组分析
     print(f"\n🎓 年资分组分析:")
@@ -414,13 +452,42 @@ def perform_xy_statistical_analysis(individual_performance_df):
             ai_acc = seniority_data['ai_accuracy']
             no_ai_acc = seniority_data['no_ai_accuracy']
             
-            t_stat_sen, p_value_sen = stats.ttest_rel(ai_acc, no_ai_acc)
-            
             print(f"   {seniority} (n={len(seniority_data)}):")
             print(f"     AI辅助: {ai_acc.mean():.1%} ± {ai_acc.std(ddof=1):.1%}")
             print(f"     无辅助: {no_ai_acc.mean():.1%} ± {no_ai_acc.std(ddof=1):.1%}")
             print(f"     提升: {seniority_data['difference'].mean():+.1%}")
-            print(f"     p值: {p_value_sen:.4f}")
+            
+            # 准备年资分组的长格式数据进行rm-ANOVA
+            seniority_long_data = []
+            for idx, row in seniority_data.iterrows():
+                seniority_long_data.extend([
+                    {'participant_id': row['participant_id'], 'condition': 'AI辅助', 'accuracy': row['ai_accuracy']},
+                    {'participant_id': row['participant_id'], 'condition': '无辅助', 'accuracy': row['no_ai_accuracy']}
+                ])
+            
+            seniority_long_df = pd.DataFrame(seniority_long_data)
+            
+            # 执行年资分组rm-ANOVA
+            seniority_rm_results = perform_rm_anova_analysis(
+                seniority_long_df,
+                participant_col='participant_id',
+                condition_col='condition',
+                dv_col='accuracy'
+            )
+            
+            if seniority_rm_results:
+                main_effect = seniority_rm_results.get('main_effect', pd.DataFrame())
+                if len(main_effect) > 0 and 'Pr(>F)' in main_effect.columns:
+                    p_value_sen = main_effect['Pr(>F)'].iloc[0]
+                    print(f"     rm-ANOVA p值: {p_value_sen:.4f}")
+                else:
+                    # 回退到t检验
+                    t_stat_sen, p_value_sen = stats.ttest_rel(ai_acc, no_ai_acc)
+                    print(f"     配对t检验 p值: {p_value_sen:.4f}")
+            else:
+                # 回退到t检验
+                t_stat_sen, p_value_sen = stats.ttest_rel(ai_acc, no_ai_acc)
+                print(f"     配对t检验 p值: {p_value_sen:.4f}")
         else:
             print(f"   {seniority}: 样本量不足，无法进行统计检验")
     
@@ -474,10 +541,8 @@ def generate_xy_summary_report(ai_metrics, paired_df, output_dir):
         
         # 统计检验
         if len(paired_df) > 1:
-            t_stat, p_value = stats.ttest_rel(paired_df['ai_accuracy'], paired_df['no_ai_accuracy'])
-            f.write(f"- t统计量：{t_stat:.3f}\n")
-            f.write(f"- p值：{p_value:.4f}\n")
-            f.write(f"- 统计显著性：{'是' if p_value < 0.05 else '否'}\n\n")
+            f.write(f"- 分析方法：rm-ANOVA（重复测量方差分析）\n")
+            f.write(f"- 统计显著性：详见分析输出\n\n")
         
         f.write("## 年资分组分析\n")
         for seniority in ['高年资', '低年资']:
@@ -489,8 +554,7 @@ def generate_xy_summary_report(ai_metrics, paired_df, output_dir):
                 f.write(f"- 提升：{seniority_data['difference'].mean():+.1%}\n")
                 
                 if len(seniority_data) > 1:
-                    t_stat_sen, p_value_sen = stats.ttest_rel(seniority_data['ai_accuracy'], seniority_data['no_ai_accuracy'])
-                    f.write(f"- p值：{p_value_sen:.4f}\n")
+                    f.write(f"- 分析方法：rm-ANOVA\n")
         
         f.write(f"\n## 结论\n")
         f.write("基于XY-Nephrology高质量数据集的分析显示：\n")
