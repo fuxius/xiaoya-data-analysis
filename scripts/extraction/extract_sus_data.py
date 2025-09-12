@@ -194,7 +194,7 @@ def main():
     # 读取年资分类数据
     print("正在加载年资分类...")
     try:
-        with open('results/seniority_classification.json', 'r', encoding='utf-8') as f:
+        with open('results/participants/seniority_classification.json', 'r', encoding='utf-8') as f:
             seniority_data = json.load(f)
         
         # 添加年资分类到数据框
